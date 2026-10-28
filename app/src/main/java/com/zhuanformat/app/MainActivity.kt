@@ -150,16 +150,21 @@ fun ConverterScreen() {
     var selectedUri by rememberSaveable { mutableStateOf<String?>(null) }
     var pickingKind by rememberSaveable { mutableStateOf(MediaKind.VIDEO.name) }
     var formatName by rememberSaveable { mutableStateOf(OutputFormat.MP4.name) }
-    var videoHeight by rememberSaveable { mutableStateOf(720) }
-    var videoBitrate by rememberSaveable { mutableStateOf(4_000_000) }
+    var videoHeight by rememberSaveable { mutableStateOf(0) }
+    var videoBitrate by rememberSaveable { mutableStateOf(0) }
     var audioBitrate by rememberSaveable { mutableStateOf(320_000) }
-    var imageMaxEdge by rememberSaveable { mutableStateOf(1920) }
-    var imageQuality by rememberSaveable { mutableStateOf(90) }
+    var imageMaxEdge by rememberSaveable { mutableStateOf(0) }
+    var imageQuality by rememberSaveable { mutableStateOf(100) }
+    var videoAudioBitrate by rememberSaveable { mutableStateOf(320_000) }
+    var videoCodecName by rememberSaveable { mutableStateOf(VideoCodec.H264.name) }
+    var imageLossless by rememberSaveable { mutableStateOf(Build.VERSION.SDK_INT >= 30) }
+    val hevcSupported = remember { VideoEncoding.isSupported(VideoCodec.HEVC) }
     var audioSampleRate by rememberSaveable { mutableStateOf(0) }
     var audioBitDepth by rememberSaveable { mutableStateOf(0) }
     val options = ConversionOptions(kind, OutputFormat.valueOf(formatName), videoHeight, videoBitrate,
-        if (kind == MediaKind.AUDIO) audioBitrate else 192_000, imageMaxEdge, imageQuality, audioSampleRate,
-        if (formatName == OutputFormat.FLAC.name && audioBitDepth == -32) 0 else audioBitDepth)
+        if (kind == MediaKind.VIDEO) videoAudioBitrate else audioBitrate, imageMaxEdge, imageQuality, audioSampleRate,
+        if (formatName == OutputFormat.FLAC.name && audioBitDepth == -32) 0 else audioBitDepth,
+        VideoCodec.valueOf(videoCodecName), imageLossless)
     var source by remember { mutableStateOf<SourceInfo?>(null) }
     var inspecting by remember { mutableStateOf(false) }
     var sourceError by remember { mutableStateOf<String?>(null) }
@@ -201,7 +206,7 @@ fun ConverterScreen() {
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { selectSource(it) }
     // AndroidX uses the system Photo Picker where available and OpenDocument on older devices.
-    val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { selectSource(it) }
+    val galleryPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { selectSource(it) }
     val saver = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val destination = result.data?.data
         val record = records.firstOrNull { it.id == savingId }
@@ -293,14 +298,16 @@ fun ConverterScreen() {
                     }
                     item {
                         SourceCard(kind, source, inspecting, sourceError, enabled = !exporting,
-                            onGalleryPick = if (kind != MediaKind.IMAGE) {{
+                            onGalleryPick = {
                                 pickingKind = kind.name
-                                runCatching { videoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) }
+                                val mediaType = if (kind == MediaKind.IMAGE) ActivityResultContracts.PickVisualMedia.ImageOnly
+                                    else ActivityResultContracts.PickVisualMedia.VideoOnly
+                                runCatching { galleryPicker.launch(PickVisualMediaRequest(mediaType)) }
                                     .onFailure {
-                                        runCatching { picker.launch(arrayOf("video/*")) }
+                                        runCatching { picker.launch(arrayOf(if (kind == MediaKind.IMAGE) "image/*" else "video/*")) }
                                             .onFailure { message("设备没有可用的相册或文件选择应用") }
                                     }
-                            }} else null,
+                            },
                             onPick = {
                                 pickingKind = kind.name
                                 // Some document providers report audio as application/octet-stream.
@@ -309,7 +316,7 @@ fun ConverterScreen() {
                             })
                     }
                     item {
-                        SettingsCard(options, onFormat = { formatName = it.name }, onVideoHeight = { videoHeight = it }, onVideoBitrate = { videoBitrate = it }, onAudioBitrate = { audioBitrate = it }, onAudioSampleRate = { audioSampleRate = it }, onAudioBitDepth = { audioBitDepth = it }, onImageEdge = { imageMaxEdge = it }, onImageQuality = { imageQuality = it })
+                        SettingsCard(options, source, hevcSupported, onVideoCodec = { videoCodecName = it.name }, onImageLossless = { imageLossless = it }, onFormat = { formatName = it.name }, onVideoHeight = { videoHeight = it }, onVideoBitrate = { videoBitrate = it }, onAudioBitrate = { if (kind == MediaKind.VIDEO) videoAudioBitrate = it else audioBitrate = it }, onAudioSampleRate = { audioSampleRate = it }, onAudioBitDepth = { audioBitDepth = it }, onImageEdge = { imageMaxEdge = it }, onImageQuality = { imageQuality = it })
                     }
                     if (active != null) item { ProgressCard(checkNotNull(active)) { ConversionService.cancel(context) } }
                     item {
@@ -366,11 +373,11 @@ fun ConverterScreen() {
 
     if (help) AlertDialog(onDismissRequest = { help = false }, icon = { Icon(Icons.Outlined.Info, null) }, title = { Text("在本地，安心转换") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("视频 → MP4（H.264 / AAC）\n音频或视频声音 → M4A / MP3 / FLAC / WAV\n图片 → JPG / PNG / WebP")
+            Text("视频 → MP4（H.264 或 H.265 / AAC）\n音频或视频声音 → M4A / MP3 / FLAC / WAV\n图片 → JPG / PNG / WebP")
             Text("音频由 FFmpeg 在本机处理，可尝试 MP4、MOV、MKV、WebM、MP3、AAC、FLAC、WAV 等。视频兼容性取决于设备；不支持批量转换或加密媒体处理。", color = Muted)
-            Text("从“音频”页可直接从相册选视频提取声音。结果可保存到手机或系统识别的 OTG U盘，在系统文件窗口选择位置。", color = Muted)
+            Text("视频、图片页可直接从相册选择；“音频”页可从相册选视频提取声音。结果可保存到手机或系统识别的 OTG U盘，在系统文件窗口选择位置。", color = Muted)
             Text("音频源文件上限 8GB，读取时会创建应用内临时副本；请为副本及输出预留存储空间。", color = Muted)
-            Text("JPG 会将透明区域填为白色；图片导出不保留 EXIF / 位置信息。WAV 文件较大，上限约 4GB。", color = Muted)
+            Text("视频默认原尺寸和自动高码率，HDR 转 SDR；高码率不等于无损。图片默认原尺寸，PNG / WebP 无损只保留解码后像素；导出不保留 EXIF / 位置信息或宽色域。JPG 透明区域填为白色。WAV 文件较大，上限约 4GB。", color = Muted)
             Text("音频开源组件：FFmpeg 7.1.5（LGPL 2.1 或更高版本）、LAME 3.100（LGPL 2 或更高版本）。许可证随应用附带，源码、构建和替换说明：github.com/GZR-zhuanjia/AndroidFormatFactory", color = Muted)
             Text("无需联网或全盘权限。后台任务可在通知或应用中取消；系统结束进程后不会自动续传。卸载应用会清除应用内结果，请及时保存。", color = Muted)
         }
@@ -410,8 +417,8 @@ private fun SourceCard(kind: MediaKind, source: SourceInfo?, loading: Boolean, e
             SectionLabel("01", "选择${kind.title}文件")
             if (onGalleryPick != null) {
                 OutlinedButton(onClick = onGalleryPick, enabled = enabled, shape = RoundedCornerShape(12.dp)) {
-                    Icon(Icons.Outlined.Movie, null, Modifier.size(18.dp))
-                    Text(if (kind == MediaKind.AUDIO) " 从相册选视频提取声音" else " 从相册选视频")
+                    Icon(if (kind == MediaKind.IMAGE) Icons.Outlined.Image else Icons.Outlined.Movie, null, Modifier.size(18.dp))
+                    Text(when (kind) { MediaKind.AUDIO -> " 从相册选视频提取声音"; MediaKind.VIDEO -> " 从相册选视频"; MediaKind.IMAGE -> " 从相册选图片" })
                 }
             }
             if (loading) {
@@ -442,7 +449,7 @@ private fun SourceCard(kind: MediaKind, source: SourceInfo?, loading: Boolean, e
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SettingsCard(options: ConversionOptions, onFormat: (OutputFormat) -> Unit, onVideoHeight: (Int) -> Unit, onVideoBitrate: (Int) -> Unit, onAudioBitrate: (Int) -> Unit, onAudioSampleRate: (Int) -> Unit, onAudioBitDepth: (Int) -> Unit, onImageEdge: (Int) -> Unit, onImageQuality: (Int) -> Unit) {
+private fun SettingsCard(options: ConversionOptions, source: SourceInfo?, hevcSupported: Boolean, onVideoCodec: (VideoCodec) -> Unit, onImageLossless: (Boolean) -> Unit, onFormat: (OutputFormat) -> Unit, onVideoHeight: (Int) -> Unit, onVideoBitrate: (Int) -> Unit, onAudioBitrate: (Int) -> Unit, onAudioSampleRate: (Int) -> Unit, onAudioBitDepth: (Int) -> Unit, onImageEdge: (Int) -> Unit, onImageQuality: (Int) -> Unit) {
     Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(22.dp)) {
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             SectionLabel("02", "设置输出")
@@ -453,9 +460,20 @@ private fun SettingsCard(options: ConversionOptions, onFormat: (OutputFormat) ->
             HorizontalDivider(color = Paper)
             when (options.kind) {
                 MediaKind.VIDEO -> {
-                    ChoiceRow("视频分辨率", listOf(0 to "原始", 1080 to "1080p", 720 to "720p", 480 to "480p"), options.videoHeight, onVideoHeight)
-                    ChoiceRow("画质 / 目标码率", listOf(8_000_000 to "清晰 8M", 4_000_000 to "均衡 4M", 2_000_000 to "小巧 2M"), options.videoBitrate, onVideoBitrate)
-                    Text("H.264 视频 + AAC 音频，保留原帧率。设备可能微调尺寸对齐或码率，以兼容编码器。", style = MaterialTheme.typography.bodySmall, color = Muted)
+                    Text("视频编码", style = MaterialTheme.typography.labelLarge, color = Muted)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        VideoCodec.entries.forEach { codec ->
+                            FilterChip(selected = options.videoCodec == codec, onClick = { onVideoCodec(codec) },
+                                enabled = codec != VideoCodec.HEVC || hevcSupported,
+                                label = { Text(codec.label) })
+                        }
+                    }
+                    if (!hevcSupported) Text("此设备未报告 HEVC 编码器，可使用 H.264。", style = MaterialTheme.typography.bodySmall, color = Muted)
+                    ChoiceRow("视频分辨率", listOf(0 to "原始", 2160 to "2160p", 1080 to "1080p", 720 to "720p", 480 to "480p"), options.videoHeight, onVideoHeight)
+                    ChoiceRow("画质 / 目标码率", listOf(0 to "自动高质量", 100_000_000 to "100M", 60_000_000 to "60M", 40_000_000 to "40M", 24_000_000 to "24M", 16_000_000 to "16M", 8_000_000 to "8M", 4_000_000 to "4M", 2_000_000 to "2M"), options.videoBitrate, onVideoBitrate)
+                    if (options.videoBitrate == 0 && source != null) Text("自动目标约 ${VideoEncoding.targetBitrate(source, options) / 1_000_000} Mbps，根据源信息、尺寸与帧率估算（8–100 Mbps）。", style = MaterialTheme.typography.bodySmall, color = Muted)
+                    ChoiceRow("视频中的 AAC 音频码率", listOf(128_000 to "128 kbps", 192_000 to "192 kbps", 256_000 to "256 kbps", 320_000 to "320 kbps"), options.audioBitrate, onAudioBitrate)
+                    Text("默认原尺寸、保留源帧率；高码率仍是有损重编码。设备可能调整尺寸或码率，HEVC 兼容性取决于播放设备；不能输出所选编码时会提示失败。HDR 会转换为 SDR，不保留原 HDR 效果。", style = MaterialTheme.typography.bodySmall, color = Muted)
                 }
                 MediaKind.AUDIO -> {
                     if (options.format in listOf(OutputFormat.M4A, OutputFormat.MP3)) ChoiceRow("音频码率", listOf(128_000 to "128 kbps", 192_000 to "192 kbps", 256_000 to "256 kbps", 320_000 to "320 kbps"), options.audioBitrate, onAudioBitrate)
@@ -474,9 +492,17 @@ private fun SettingsCard(options: ConversionOptions, onFormat: (OutputFormat) ->
                     Text("提高码率可减少重编码损失；提高采样率或位深不能恢复源文件已丢失的音质。MP3 / AAC 采样率会调整到编码器支持的值。", style = MaterialTheme.typography.bodySmall, color = Muted)
                 }
                 MediaKind.IMAGE -> {
-                    ChoiceRow("图片最长边", listOf(0 to "原图", 2560 to "2560px", 1920 to "1920px", 1280 to "1280px"), options.imageMaxEdge, onImageEdge)
-                    if (options.format != OutputFormat.PNG) ChoiceRow("图片质量", listOf(80 to "80%", 90 to "90%", 100 to "100%"), options.imageQuality, onImageQuality)
-                    Text(if (options.format == OutputFormat.JPG) "透明区域将填为白色。自动纠正拍摄方向，导出不保留位置信息。" else "保留透明度，自动纠正拍摄方向。导出为静态图片，不保留动画或位置信息。", style = MaterialTheme.typography.bodySmall, color = Muted)
+                    ChoiceRow("图片最长边", listOf(0 to "原图", 4096 to "4096px", 3840 to "3840px", 2560 to "2560px", 1920 to "1920px", 1280 to "1280px"), options.imageMaxEdge, onImageEdge)
+                    if (options.format == OutputFormat.WEBP) {
+                        Text("WebP 编码", style = MaterialTheme.typography.labelLarge, color = Muted)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(selected = !options.imageLossless, onClick = { onImageLossless(false) }, label = { Text("有损") })
+                            FilterChip(selected = options.imageLossless, onClick = { onImageLossless(true) }, enabled = Build.VERSION.SDK_INT >= 30, label = { Text("无损（Android 11+）") })
+                        }
+                    }
+                    if (options.format != OutputFormat.PNG && !(options.format == OutputFormat.WEBP && options.imageLossless)) ChoiceRow("图片质量", listOf(80 to "80%", 90 to "90%", 95 to "95%", 100 to "100%"), options.imageQuality, onImageQuality)
+                    Text(if (options.format == OutputFormat.JPG) "默认原尺寸、质量 100；JPG 仍为有损编码，透明区域填为白色。" else "PNG / WebP 无损保留解码后的像素；WebP 有损质量 100 不等于无损。保留透明度，仅导出静态图片。", style = MaterialTheme.typography.bodySmall, color = Muted)
+                    Text("自动纠正方向，不保留原 EXIF / 位置信息或宽色域。解码超过 2400 万像素会提示选择较小尺寸，不会自动缩小原图。", style = MaterialTheme.typography.bodySmall, color = Muted)
                 }
             }
         }

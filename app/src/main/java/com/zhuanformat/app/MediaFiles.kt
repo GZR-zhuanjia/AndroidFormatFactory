@@ -3,6 +3,8 @@ package com.zhuanformat.app
 import android.content.Context
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.exifinterface.media.ExifInterface
@@ -57,11 +59,15 @@ object MediaFiles {
             val rawHeight = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
             val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
             val swapAxes = rotation % 180 != 0
+            val trackInfo = videoTrackInfo(context, uri)
             SourceInfo(
                 uri.toString(), name, size,
                 durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0,
                 width = if (swapAxes) rawHeight else rawWidth,
-                height = if (swapAxes) rawWidth else rawHeight
+                height = if (swapAxes) rawWidth else rawHeight,
+                videoBitrate = trackInfo.first.takeIf { it > 0 }
+                    ?: retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toIntOrNull() ?: 0,
+                frameRate = trackInfo.second
             )
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -69,6 +75,24 @@ object MediaFiles {
             inspectNative(context, uri, document, kind)
         } finally {
             retriever.release()
+        }
+    }
+
+    private fun videoTrackInfo(context: Context, uri: Uri): Pair<Int, Float> {
+        val extractor = MediaExtractor()
+        return try {
+            extractor.setDataSource(context, uri, null)
+            (0 until extractor.trackCount).map { extractor.getTrackFormat(it) }
+                .firstOrNull { it.getString(MediaFormat.KEY_MIME)?.startsWith("video/") == true }?.let { format ->
+                    val bitrate = runCatching { format.getInteger(MediaFormat.KEY_BIT_RATE) }.getOrDefault(0)
+                    val frameRate = runCatching { format.getInteger(MediaFormat.KEY_FRAME_RATE).toFloat() }
+                        .getOrElse { runCatching { format.getFloat(MediaFormat.KEY_FRAME_RATE) }.getOrDefault(0f) }
+                    bitrate to frameRate
+                } ?: (0 to 0f)
+        } catch (_: Exception) {
+            0 to 0f
+        } finally {
+            extractor.release()
         }
     }
 

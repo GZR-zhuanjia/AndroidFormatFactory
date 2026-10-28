@@ -150,6 +150,7 @@ class ConversionService : Service() {
                 putExtra("audioBitrate", options.audioBitrate); putExtra("imageMaxEdge", options.imageMaxEdge)
                 putExtra("imageQuality", options.imageQuality)
                 putExtra("audioSampleRate", options.audioSampleRate); putExtra("audioBitDepth", options.audioBitDepth)
+                putExtra("videoCodec", options.videoCodec.name); putExtra("imageLossless", options.imageLossless)
             })
         }
         fun cancel(context: Context) {
@@ -158,16 +159,18 @@ class ConversionService : Service() {
         private fun optionsFrom(intent: Intent) = ConversionOptions(
             kind = MediaKind.valueOf(checkNotNull(intent.getStringExtra("kind"))),
             format = OutputFormat.valueOf(checkNotNull(intent.getStringExtra("format"))),
-            videoHeight = intent.getIntExtra("videoHeight", 720), videoBitrate = intent.getIntExtra("videoBitrate", 4_000_000),
-            audioBitrate = intent.getIntExtra("audioBitrate", 192_000), imageMaxEdge = intent.getIntExtra("imageMaxEdge", 1920),
-            imageQuality = intent.getIntExtra("imageQuality", 90),
-            audioSampleRate = intent.getIntExtra("audioSampleRate", 0), audioBitDepth = intent.getIntExtra("audioBitDepth", 0)
+            videoHeight = intent.getIntExtra("videoHeight", 0), videoBitrate = intent.getIntExtra("videoBitrate", 0),
+            audioBitrate = intent.getIntExtra("audioBitrate", 320_000), imageMaxEdge = intent.getIntExtra("imageMaxEdge", 0),
+            imageQuality = intent.getIntExtra("imageQuality", 100),
+            audioSampleRate = intent.getIntExtra("audioSampleRate", 0), audioBitDepth = intent.getIntExtra("audioBitDepth", 0),
+            videoCodec = VideoCodec.valueOf(intent.getStringExtra("videoCodec") ?: VideoCodec.H264.name),
+            imageLossless = intent.getBooleanExtra("imageLossless", false)
         )
         fun friendlyError(error: Exception): String = when (error) {
             is SecurityException -> "文件访问权限已失效，请重新选择文件。"
             is ExportException -> when (error.errorCode) {
                 in 3000..3999 -> "设备无法解码这个文件，文件可能已损坏或采用了不支持的编码。（${error.errorCode}）"
-                in 4000..4999 -> "设备不支持所选编码参数，请降低视频分辨率或换一个文件重试。（${error.errorCode}）"
+                in 4000..4999 -> "设备不支持所选编码参数，请降低视频尺寸或码率，或改用 H.264 后重试。（${error.errorCode}）"
                 in 5000..6999 -> "设备无法处理此媒体，HDR 或特殊音视频编码可能不受支持。（${error.errorCode}）"
                 in 7000..7999 -> "输出封装失败，请检查存储空间，或尝试更小的文件。（${error.errorCode}）"
                 else -> "读取或转换失败，请确认文件可用、存储空间充足后重试。（${error.errorCode}）"

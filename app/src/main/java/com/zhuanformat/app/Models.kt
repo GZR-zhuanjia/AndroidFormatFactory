@@ -19,38 +19,44 @@ enum class OutputFormat(val label: String, val extension: String, val mime: Stri
     WEBP("WebP", "webp", "image/webp")
 }
 
+enum class VideoCodec(val label: String, val mime: String) {
+    H264("H.264", "video/avc"), HEVC("H.265 / HEVC", "video/hevc")
+}
+
 data class ConversionOptions(
     val kind: MediaKind = MediaKind.VIDEO,
     val format: OutputFormat = OutputFormat.MP4,
-    val videoHeight: Int = 720,
-    val videoBitrate: Int = 4_000_000,
-    val audioBitrate: Int = if (kind == MediaKind.AUDIO) 320_000 else 192_000,
-    val imageMaxEdge: Int = 1920,
-    val imageQuality: Int = 90,
+    val videoHeight: Int = 0,
+    val videoBitrate: Int = 0,
+    val audioBitrate: Int = 320_000,
+    val imageMaxEdge: Int = 0,
+    val imageQuality: Int = 100,
     val audioSampleRate: Int = 0,
-    val audioBitDepth: Int = 0
+    val audioBitDepth: Int = 0,
+    val videoCodec: VideoCodec = VideoCodec.H264,
+    val imageLossless: Boolean = false
 ) {
     fun validate() {
         require(format in formatsFor(kind)) { "该输出格式不适用于所选媒体类型" }
-        require(videoHeight in listOf(0, 480, 720, 1080))
-        require(videoBitrate in listOf(2_000_000, 4_000_000, 8_000_000))
+        require(videoHeight in listOf(0, 480, 720, 1080, 2160))
+        require(videoBitrate in listOf(0, 2_000_000, 4_000_000, 8_000_000, 16_000_000, 24_000_000, 40_000_000, 60_000_000, 100_000_000))
         require(audioBitrate in listOf(128_000, 192_000, 256_000, 320_000))
         require(audioSampleRate in listOf(0, 44100, 48000, 96000))
         require(audioBitDepth in listOf(0, 16, 24, -32))
         require(format != OutputFormat.FLAC || audioBitDepth != -32) { "FLAC 不支持浮点输出" }
-        require(imageMaxEdge in listOf(0, 1280, 1920, 2560))
-        require(imageQuality in listOf(80, 90, 100))
+        require(imageMaxEdge in listOf(0, 1280, 1920, 2560, 3840, 4096))
+        require(imageQuality in listOf(80, 90, 95, 100))
     }
     private val audioRateSummary: String get() = if (audioSampleRate == 0) "原采样率（编码器允许时）" else "${audioSampleRate / 1000.0} kHz"
     val summary: String get() = when (kind) {
-        MediaKind.VIDEO -> "H.264 / AAC · ${if (videoHeight == 0) "原始尺寸" else "最高 ${videoHeight}p"}"
+        MediaKind.VIDEO -> "${videoCodec.label} / AAC ${audioBitrate / 1000} kbps · ${if (videoHeight == 0) "原始尺寸" else "最高 ${videoHeight}p"} · ${if (videoBitrate == 0) "自动高码率" else "目标 ${videoBitrate / 1_000_000} Mbps"} · HDR转SDR"
         MediaKind.AUDIO -> when (format) {
             OutputFormat.WAV -> "PCM ${when (audioBitDepth) { 0 -> "按源位深"; -32 -> "32 位浮点"; else -> "$audioBitDepth 位" }} · $audioRateSummary · 保留声道"
             OutputFormat.FLAC -> "FLAC ${if (audioBitDepth == 0) "按源位深（最高24位）" else "$audioBitDepth 位"} · $audioRateSummary · 保留声道"
             OutputFormat.MP3 -> "MP3 · ${audioBitrate / 1000} kbps · $audioRateSummary · 最多双声道"
             else -> "AAC · ${audioBitrate / 1000} kbps · $audioRateSummary · 最多双声道"
         }
-        MediaKind.IMAGE -> "${if (imageMaxEdge == 0) "原始尺寸" else "最长边 ${imageMaxEdge}px"}${if (format == OutputFormat.PNG) " · 无损编码" else " · 质量 $imageQuality%"}"
+        MediaKind.IMAGE -> "${if (imageMaxEdge == 0) "原始尺寸" else "最长边 ${imageMaxEdge}px"}${if (format == OutputFormat.PNG || format == OutputFormat.WEBP && imageLossless) " · 无损编码（解码后像素）" else " · 有损编码质量 $imageQuality%"}"
     }
 }
 
@@ -66,7 +72,9 @@ data class SourceInfo(
     val size: Long = -1,
     val durationMs: Long = 0,
     val width: Int = 0,
-    val height: Int = 0
+    val height: Int = 0,
+    val videoBitrate: Int = 0,
+    val frameRate: Float = 0f
 ) {
     val detail: String get() = listOfNotNull(
         if (size >= 0) formatBytes(size) else null,

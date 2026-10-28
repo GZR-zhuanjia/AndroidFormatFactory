@@ -31,3 +31,14 @@
 - `./gradlew --offline :app:externalNativeBuildDebug -PnativeAbis=arm64-v8a --console=plain`：`BUILD SUCCESSFUL in 28s`，4 项任务全部执行。
 
 只做编译与静态差异检查；未启动模拟器、运行转换或 UI/单元测试、生成 APK/ZIP。相册选择、实际 OTG U盘写入/拔盘和输出音频需在真机确认。编译提示仍为现有 CoroutineStart.ATOMIC / Gradle 9 兼容性提示，另有只影响统计的 Android 用户目录不可写提示；编译未失败。本轮未验证 x86_64。
+
+## 视频与图片高质量选项
+
+2026-10-28，将高质量选项扩展到现有视频与图片流程，界面字号与风格不变，音频选项及所有类型的手机 / U盘保存流程继续保留。
+
+- 视频默认原尺寸、按源信息 / 尺寸 / 帧率估算的自动高码率（8–100 Mbps），保留原帧率；新增 2160p 和 16 / 24 / 40 / 60 / 100 Mbps 档，保留旧尺寸及低码率档，并暴露视频 AAC 最高 320 kbps。
+- H.264 默认，HEVC 仅在设备报告编码器时允许；完成后核对输出 MIME，回退为其他编码时明确失败，临时结果由既有 Service 清理。设备仍可能对尺寸 / 码率做兼容调整。HDR 继续色调映射为 SDR，界面和 README 已说明。
+- 图片默认原尺寸、质量 100，新增 3840 / 4096 px 及质量 95。Android 11+ WebP 实际调用 WEBP_LOSSLESS（界面默认），同时保留有损模式。PNG / WebP 无损限于经过方向 / 尺寸 / 8 位 sRGB 处理后的像素；不保留 EXIF、宽色域、动画或原文件结构。24MP 解码内存边界继续明确报错，未改为自动缩图。
+- 图片相册入口使用 ImageOnly；视频及音频提取继续使用 VideoOnly，文件选择入口保留。
+
+本轮唯一一次编译：`./gradlew --offline :app:compileDebugKotlin -PnativeAbis=arm64-v8a --console=plain`，`BUILD SUCCESSFUL in 51s`，15 项任务，2 执行、13 已为最新；`git diff --check` 通过。修正既有参数测试里已过时的 2160p 拒绝断言，改为仍不支持的 4320p，未新增或执行测试套件。未修改 native、未重建 FFmpeg / JNI、未打包、未启动模拟器，未运行真机转换或监控 CI。HEVC / 4K 编码、实际输出质量、图片像素及相册 / OTG 操作仍需真机验证。

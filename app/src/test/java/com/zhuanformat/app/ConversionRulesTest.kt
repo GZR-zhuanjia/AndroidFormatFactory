@@ -25,7 +25,7 @@ class ConversionRulesTest {
 
     @Test fun invalidKindAndFormatCombinationIsRejected() {
         assertThrows(IllegalArgumentException::class.java) { ConversionOptions(kind = MediaKind.IMAGE, format = OutputFormat.MP4).validate() }
-        assertThrows(IllegalArgumentException::class.java) { ConversionOptions(videoHeight = 2160).validate() }
+        assertThrows(IllegalArgumentException::class.java) { ConversionOptions(videoHeight = 4320).validate() }
         assertThrows(IllegalArgumentException::class.java) { ConversionOptions(imageQuality = -1).validate() }
         MediaKind.entries.forEach { kind -> formatsFor(kind).forEach { format -> ConversionOptions(kind = kind, format = format).validate() } }
     }

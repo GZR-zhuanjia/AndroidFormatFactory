@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.ColorSpace
 import android.graphics.Matrix
 import android.net.Uri
 import android.os.Build
@@ -35,11 +36,12 @@ object ImageConverter {
         var sample = 1
         while (bounds.outWidth / (sample * 2) >= target.first && bounds.outHeight / (sample * 2) >= target.second) sample *= 2
         require(bounds.outWidth.toLong() / sample * (bounds.outHeight / sample) <= MAX_DECODED_PIXELS) {
-            "图片过大，请将最长边设为 2560px 或更小后重试"
+            "所选尺寸解码超过 2400 万像素的内存安全上限，请选择较小的最长边（如 4096px 或 2560px）后重试；不会自动缩小原图"
         }
         val decodeOptions = BitmapFactory.Options().apply {
             inSampleSize = sample
             inPreferredConfig = Bitmap.Config.ARGB_8888
+            inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
         }
         var bitmap = resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, decodeOptions) }
             ?: throw IOException("图片解码失败")
@@ -66,7 +68,10 @@ object ImageConverter {
             val format = when (options.format) {
                 OutputFormat.JPG -> Bitmap.CompressFormat.JPEG
                 OutputFormat.PNG -> Bitmap.CompressFormat.PNG
-                OutputFormat.WEBP -> if (Build.VERSION.SDK_INT >= 30) Bitmap.CompressFormat.WEBP_LOSSY else {
+                OutputFormat.WEBP -> if (Build.VERSION.SDK_INT >= 30) {
+                    if (options.imageLossless) Bitmap.CompressFormat.WEBP_LOSSLESS else Bitmap.CompressFormat.WEBP_LOSSY
+                } else {
+                    require(!options.imageLossless) { "WebP 无损输出需要 Android 11 或更新版本，请选择 PNG 或 WebP 有损编码" }
                     @Suppress("DEPRECATION")
                     Bitmap.CompressFormat.WEBP
                 }

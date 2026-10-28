@@ -30,12 +30,13 @@ import kotlin.coroutines.resumeWithException
 object MediaTransformer {
     /** Every Transformer call, including cancellation and progress, belongs to its main looper. */
     suspend fun convert(context: Context, source: SourceInfo, options: ConversionOptions, output: File, progress: (Int?, String) -> Unit) = withContext(Dispatchers.Main.immediate) {
+        require(options.kind != MediaKind.VIDEO || VideoEncoding.isSupported(options.videoCodec)) { "设备没有可用的 ${options.videoCodec.label} 编码器，请选择 H.264 或其他设备" }
         suspendCancellableCoroutine { continuation ->
             val handler = Handler(Looper.getMainLooper())
             val encoder = DefaultEncoderFactory.Builder(context)
                 .setRequestedAudioEncoderSettings(AudioEncoderSettings.Builder().setBitrate(options.audioBitrate).build())
-                .setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(options.videoBitrate).build())
-                // This factory keeps the requested MIME type, while aligning size/bitrate to the encoder.
+                .setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(VideoEncoding.targetBitrate(source, options)).build())
+                // Allow device parameter alignment, then verify the actual output codec before publishing.
                 .setEnableFallback(true)
                 .build()
             val edited = EditedMediaItem.Builder(MediaItem.fromUri(Uri.parse(source.uri)))
@@ -47,12 +48,16 @@ object MediaTransformer {
             var poll: Runnable? = null
             val transformer = Transformer.Builder(context)
                 .setAudioMimeType(MimeTypes.AUDIO_AAC)
-                .apply { if (options.kind == MediaKind.VIDEO) setVideoMimeType(MimeTypes.VIDEO_H264) }
+                .apply { if (options.kind == MediaKind.VIDEO) setVideoMimeType(options.videoCodec.mime) }
                 .setEncoderFactory(encoder)
                 .addListener(object : Transformer.Listener {
                     override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                         poll?.let(handler::removeCallbacks)
-                        if (continuation.isActive) continuation.resume(Unit)
+                        if (continuation.isActive) {
+                            if (options.kind == MediaKind.VIDEO && exportResult.videoMimeType != options.videoCodec.mime)
+                                continuation.resumeWithException(IllegalStateException("设备未能输出所选 ${options.videoCodec.label} 编码，请调整尺寸/码率或改用 H.264 后重试"))
+                            else continuation.resume(Unit)
+                        }
                     }
                     override fun onError(composition: Composition, exportResult: ExportResult, exportException: ExportException) {
                         poll?.let(handler::removeCallbacks)
@@ -65,7 +70,7 @@ object MediaTransformer {
                     if (!continuation.isActive) return
                     val holder = ProgressHolder()
                     val state = transformer.getProgress(holder)
-                    progress(if (state == Transformer.PROGRESS_STATE_AVAILABLE) holder.progress else null, if (options.kind == MediaKind.VIDEO) "编码 H.264 / AAC" else "编码 AAC 音频")
+                    progress(if (state == Transformer.PROGRESS_STATE_AVAILABLE) holder.progress else null, if (options.kind == MediaKind.VIDEO) "编码 ${options.videoCodec.label} / AAC" else "编码 AAC 音频")
                     handler.postDelayed(this, 500)
                 }
             }
