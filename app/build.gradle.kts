@@ -4,9 +4,38 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+val nativeAbis = providers.gradleProperty("nativeAbis").orElse("arm64-v8a,x86_64")
+    .get().split(',').map(String::trim).filter(String::isNotEmpty)
+require(nativeAbis.isNotEmpty() && nativeAbis.all { it in setOf("arm64-v8a", "x86_64") }) {
+    "nativeAbis must contain arm64-v8a and/or x86_64"
+}
+
+val checkNativeDependencies by tasks.registering {
+    group = "verification"
+    description = "Require reproducibly built FFmpeg/LAME libraries for every selected ABI."
+    doLast {
+        val required = listOf("include/libavformat/avformat.h", "include/libavcodec/avcodec.h",
+            "include/libswresample/swresample.h", "lib/libavformat.so", "lib/libavcodec.so",
+            "lib/libavutil.so", "lib/libswresample.so", "lib/libmp3lame.so")
+        val missing = nativeAbis.flatMap { abi -> required.map { rootProject.file("native-deps/$abi/$it") } }
+            .filterNot { it.isFile }
+        check(missing.isEmpty()) {
+            "Native dependencies missing. Run ./scripts/build-native.sh --abis ${nativeAbis.joinToString(",")} " +
+                "with ANDROID_NDK_HOME pointing to NDK 28.2.13676358. Missing: " + missing.joinToString { it.path }
+        }
+    }
+}
+
+tasks.configureEach {
+    if (name == "preBuild" || name.startsWith("configureCMake") || name.startsWith("buildCMake")) {
+        dependsOn(checkNativeDependencies)
+    }
+}
+
 android {
     namespace = "com.zhuanformat.app"
     compileSdk = 35
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "com.zhuanformat.app"
@@ -15,9 +44,14 @@ android {
         versionCode = 1
         versionName = "1.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        ndk { abiFilters += nativeAbis }
+        externalNativeBuild {
+            cmake { arguments += "-DANDROID_STL=c++_shared" }
+        }
     }
 
     buildFeatures { compose = true }
+    sourceSets.getByName("main").assets.srcDir(rootProject.file("docs/licenses"))
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -30,6 +64,12 @@ android {
         }
     }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
     lint { abortOnError = true }
 }
 

@@ -7,11 +7,13 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.exifinterface.media.ExifInterface
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.io.IOException
 
 object MediaFiles {
-    suspend fun inspect(context: Context, uri: Uri, kind: MediaKind): SourceInfo = withContext(Dispatchers.IO) {
+    suspend fun documentInfo(context: Context, uri: Uri): SourceInfo = withContext(Dispatchers.IO) {
         require(uri.scheme == "content") { "请通过系统文件选择器选择文件" }
         var name = "未命名文件"
         var size = -1L
@@ -24,6 +26,13 @@ object MediaFiles {
             }
         }
         require(size != 0L) { "所选文件是空文件" }
+        SourceInfo(uri.toString(), name, size)
+    }
+
+    suspend fun inspect(context: Context, uri: Uri, kind: MediaKind): SourceInfo = withContext(Dispatchers.IO) {
+        val document = documentInfo(context, uri)
+        val name = document.name
+        val size = document.size
         if (kind == MediaKind.IMAGE) {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             val input = context.contentResolver.openInputStream(uri) ?: throw IOException("无法读取所选图片")
@@ -35,6 +44,8 @@ object MediaFiles {
             val swap = orientation in listOf(ExifInterface.ORIENTATION_ROTATE_90, ExifInterface.ORIENTATION_ROTATE_270, ExifInterface.ORIENTATION_TRANSPOSE, ExifInterface.ORIENTATION_TRANSVERSE)
             return@withContext SourceInfo(uri.toString(), name, size, width = if (swap) bounds.outHeight else bounds.outWidth, height = if (swap) bounds.outWidth else bounds.outHeight)
         }
+        // FFmpeg can decode formats the platform metadata retriever does not recognize.
+        if (kind == MediaKind.AUDIO) return@withContext inspectNative(context, uri, document, kind)
         val retriever = MediaMetadataRetriever()
         try {
             retriever.setDataSource(context, uri)
@@ -52,8 +63,32 @@ object MediaFiles {
                 width = if (swapAxes) rawHeight else rawWidth,
                 height = if (swapAxes) rawWidth else rawHeight
             )
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            inspectNative(context, uri, document, kind)
         } finally {
             retriever.release()
+        }
+    }
+
+    private suspend fun inspectNative(context: Context, uri: Uri, document: SourceInfo, kind: MediaKind): SourceInfo {
+        val local = LocalMediaInput.copy(context, uri, document.size)
+        try {
+            val metadata = JSONObject(nativeAudioSession { NativeAudioBridge.probe(it, local.absolutePath) })
+            require(metadata.optBoolean(if (kind == MediaKind.AUDIO) "hasAudio" else "hasVideo")) {
+                if (kind == MediaKind.AUDIO) "所选文件不包含可识别的音频轨道" else "所选文件不包含可识别的视频轨道"
+            }
+            val width = metadata.optInt("width")
+            val height = metadata.optInt("height")
+            val swap = metadata.optInt("rotation") % 180 != 0
+            return document.copy(
+                durationMs = metadata.optLong("durationMs"),
+                width = if (swap) height else width,
+                height = if (swap) width else height
+            )
+        } finally {
+            local.delete()
         }
     }
 }

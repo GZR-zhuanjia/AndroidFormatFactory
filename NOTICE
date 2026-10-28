@@ -21,3 +21,15 @@ Dependency artifacts may include their own additional notices and licenses.
 
 A full copy of the Apache License, Version 2.0 is included at
 docs/licenses/Apache-2.0.txt.
+
+Native audio dependencies (downloaded and compiled from pinned source):
+FFmpeg 7.1.5, Copyright (c) the FFmpeg developers, https://ffmpeg.org/
+Built with --disable-gpl --disable-nonfree --disable-version3, under LGPL
+2.1-or-later. No FFmpeg command-line executable is distributed.
+LAME 3.100 / libmp3lame, Copyright (c) the LAME developers,
+https://lame.sourceforge.io/ , under the GNU Library GPL version 2 or later.
+Both are dynamically linked. Source archives, SHA-256 hashes, configuration,
+rebuild/replacement instructions and distribution responsibilities are in
+docs/NATIVE_AUDIO.md and scripts/build-native.sh. The upstream license texts
+are included in docs/licenses and are also bundled as application assets.
+Third-party copyrights and source-file notices remain applicable.

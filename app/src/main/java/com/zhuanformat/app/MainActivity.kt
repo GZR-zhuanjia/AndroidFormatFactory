@@ -286,7 +286,8 @@ fun ConverterScreen() {
                     item {
                         SourceCard(kind, source, inspecting, sourceError, enabled = !exporting) {
                             pickingKind = kind.name
-                            picker.launch(if (kind == MediaKind.AUDIO) arrayOf("audio/*", "video/*") else arrayOf(kind.pickerMime))
+                            // Some document providers report audio as application/octet-stream.
+                            picker.launch(if (kind == MediaKind.AUDIO) arrayOf("*/*") else arrayOf(kind.pickerMime))
                         }
                     }
                     item {
@@ -347,9 +348,11 @@ fun ConverterScreen() {
 
     if (help) AlertDialog(onDismissRequest = { help = false }, icon = { Icon(Icons.Outlined.Info, null) }, title = { Text("在本地，安心转换") }, text = {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("视频 → MP4（H.264 / AAC）\n音频或视频声音 → M4A / WAV\n图片 → JPG / PNG / WebP")
-            Text("输入可尝试 MP4、MOV、MKV、WebM、MP3、AAC、FLAC、WAV 等，实际支持取决于设备。暂不提供 MP3 输出、批量转换或加密媒体处理。", color = Muted)
+            Text("视频 → MP4（H.264 / AAC）\n音频或视频声音 → M4A / MP3 / FLAC / WAV\n图片 → JPG / PNG / WebP")
+            Text("音频由 FFmpeg 在本机处理，可尝试 MP4、MOV、MKV、WebM、MP3、AAC、FLAC、WAV 等。视频兼容性取决于设备；不支持批量转换或加密媒体处理。", color = Muted)
+            Text("音频源文件上限 8GB，读取时会创建应用内临时副本；请为副本及输出预留存储空间。", color = Muted)
             Text("JPG 会将透明区域填为白色；图片导出不保留 EXIF / 位置信息。WAV 文件较大，上限约 4GB。", color = Muted)
+            Text("音频开源组件：FFmpeg 7.1.5（LGPL 2.1 或更高版本）、LAME 3.100（LGPL 2 或更高版本）。许可证随应用附带，源码、构建和替换说明：github.com/GZR-zhuanjia/AndroidFormatFactory", color = Muted)
             Text("无需联网或全盘权限。后台任务可在通知或应用中取消；系统结束进程后不会自动续传。卸载应用会清除应用内结果，请及时保存。", color = Muted)
         }
     }, confirmButton = { TextButton(onClick = { help = false }) { Text("知道了") } })
@@ -423,8 +426,13 @@ private fun SettingsCard(options: ConversionOptions, onFormat: (OutputFormat) ->
                     Text("H.264 视频 + AAC 音频，保留原帧率。设备可能微调尺寸对齐或码率，以兼容编码器。", style = MaterialTheme.typography.bodySmall, color = Muted)
                 }
                 MediaKind.AUDIO -> {
-                    if (options.format == OutputFormat.M4A) ChoiceRow("AAC 音频码率", listOf(128_000 to "128 kbps", 192_000 to "192 kbps", 256_000 to "256 kbps"), options.audioBitrate, onAudioBitrate)
-                    Text(if (options.format == OutputFormat.WAV) "16 位 PCM，无压缩编码。保留原采样率与声道；文件较大，标准 WAV 上限约 4GB。" else "M4A 容器 · AAC 编码。选择视频时仅提取声音。", style = MaterialTheme.typography.bodySmall, color = Muted)
+                    if (options.format in listOf(OutputFormat.M4A, OutputFormat.MP3)) ChoiceRow("音频码率", listOf(128_000 to "128 kbps", 192_000 to "192 kbps", 256_000 to "256 kbps"), options.audioBitrate, onAudioBitrate)
+                    Text(when (options.format) {
+                        OutputFormat.WAV -> "16 位 PCM，无压缩编码。保留原采样率与声道；文件较大，标准 WAV 上限约 4GB。"
+                        OutputFormat.FLAC -> "FLAC 16 / 24 位整数无损压缩，保留采样率与声道；浮点或更高位深会转为 24 位。"
+                        OutputFormat.MP3 -> "LAME MP3 编码，最多双声道；采样率必要时调整到编码器支持的值。选择视频时仅提取声音。"
+                        else -> "M4A 容器 · AAC 编码，最多双声道。选择视频时仅提取声音。"
+                    }, style = MaterialTheme.typography.bodySmall, color = Muted)
                 }
                 MediaKind.IMAGE -> {
                     ChoiceRow("图片最长边", listOf(0 to "原图", 2560 to "2560px", 1920 to "1920px", 1280 to "1280px"), options.imageMaxEdge, onImageEdge)

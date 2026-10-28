@@ -71,7 +71,9 @@ class ConversionService : Service() {
             val temporary = File(repository.temporaryDir, "${record.id}.part")
             var finalOutput: File? = null
             try {
-                val source = MediaFiles.inspect(this@ConversionService, Uri.parse(sourceUri), options.kind)
+                val source = if (options.kind == MediaKind.AUDIO) {
+                    MediaFiles.documentInfo(this@ConversionService, Uri.parse(sourceUri))
+                } else MediaFiles.inspect(this@ConversionService, Uri.parse(sourceUri), options.kind)
                 val report: (Int?, String) -> Unit = { percent, stage ->
                     // IO engines call this from worker threads. Serialize observable state on main.
                     scope.launch {
@@ -87,7 +89,7 @@ class ConversionService : Service() {
                 }
                 when {
                     options.kind == MediaKind.IMAGE -> ImageConverter.convert(this@ConversionService, Uri.parse(sourceUri), options, temporary, report)
-                    options.format == OutputFormat.WAV -> WavConverter.convert(this@ConversionService, Uri.parse(sourceUri), temporary, report)
+                    options.kind == MediaKind.AUDIO -> NativeAudioConverter.convert(this@ConversionService, source, options, temporary, report)
                     else -> MediaTransformer.convert(this@ConversionService, source, options, temporary, report)
                 }
                 ensureActive()
@@ -170,6 +172,11 @@ class ConversionService : Service() {
             }
             is IllegalArgumentException, is IllegalStateException -> error.message?.takeIf { it.any { c -> c.code in 0x4E00..0x9FFF } } ?: "设备不支持这个文件或所选参数，请更换文件或降低尺寸后重试。"
             is IOException -> "无法读写文件，请检查文件访问权限与剩余存储空间。"
+            is RuntimeException -> when {
+                error.message?.contains("ENOSPC", ignoreCase = true) == true || error.message?.contains("No space left", ignoreCase = true) == true -> "存储空间不足，请释放空间后重试。"
+                error.message?.contains("OUTPUT_TOO_LARGE") == true -> "输出文件超过大小上限：WAV 约 4GB，其他音频 8GB。请缩短源文件或选择压缩格式。"
+                else -> "音频转换失败，文件可能已损坏、加密或不支持。请尝试其他文件或输出格式。"
+            }
             else -> "转换未能完成，请重新选择文件，或尝试其他输出参数。"
         }
     }

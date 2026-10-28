@@ -11,6 +11,8 @@ enum class MediaKind(val title: String, val pickerMime: String) {
 enum class OutputFormat(val label: String, val extension: String, val mime: String) {
     MP4("MP4", "mp4", "video/mp4"),
     M4A("M4A", "m4a", "audio/mp4"),
+    MP3("MP3", "mp3", "audio/mpeg"),
+    FLAC("FLAC", "flac", "audio/flac"),
     WAV("WAV", "wav", "audio/wav"),
     JPG("JPG", "jpg", "image/jpeg"),
     PNG("PNG", "png", "image/png"),
@@ -36,14 +38,19 @@ data class ConversionOptions(
     }
     val summary: String get() = when (kind) {
         MediaKind.VIDEO -> "H.264 / AAC · ${if (videoHeight == 0) "原始尺寸" else "最高 ${videoHeight}p"}"
-        MediaKind.AUDIO -> if (format == OutputFormat.WAV) "PCM 16 位 · 保留原采样率与声道" else "AAC · ${audioBitrate / 1000} kbps"
+        MediaKind.AUDIO -> when (format) {
+            OutputFormat.WAV -> "PCM 16 位 · 保留原采样率与声道"
+            OutputFormat.FLAC -> "FLAC · 无损压缩"
+            OutputFormat.MP3 -> "MP3 · ${audioBitrate / 1000} kbps · 最多双声道"
+            else -> "AAC · ${audioBitrate / 1000} kbps · 最多双声道"
+        }
         MediaKind.IMAGE -> "${if (imageMaxEdge == 0) "原始尺寸" else "最长边 ${imageMaxEdge}px"}${if (format == OutputFormat.PNG) " · 无损编码" else " · 质量 $imageQuality%"}"
     }
 }
 
 fun formatsFor(kind: MediaKind): List<OutputFormat> = when (kind) {
     MediaKind.VIDEO -> listOf(OutputFormat.MP4)
-    MediaKind.AUDIO -> listOf(OutputFormat.M4A, OutputFormat.WAV)
+    MediaKind.AUDIO -> listOf(OutputFormat.M4A, OutputFormat.MP3, OutputFormat.FLAC, OutputFormat.WAV)
     MediaKind.IMAGE -> listOf(OutputFormat.JPG, OutputFormat.PNG, OutputFormat.WEBP)
 }
 
