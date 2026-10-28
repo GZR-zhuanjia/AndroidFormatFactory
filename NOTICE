@@ -1,0 +1,23 @@
+转格式 / ZhuanFormat
+
+Original application code and documentation are provided under the MIT License
+in LICENSE. Third-party works retain their own copyright and license terms.
+
+The following nine files under app/src/main/java/com/zhuanformat/app/icons/
+are adapted from AndroidX Compose Material Icons Extended 1.7.8:
+ArrowDownward.kt, DeleteOutline.kt, FolderOpen.kt, GraphicEq.kt, History.kt,
+Image.kt, Movie.kt, MusicNote.kt, and SwapHoriz.kt.
+
+Copyright 2025 The Android Open Source Project.
+Licensed under the Apache License, Version 2.0.
+The original license headers are retained. Their package declarations were
+changed to com.zhuanformat.app.icons; these files are not relicensed under MIT.
+
+AndroidX libraries (including Activity, Core, Lifecycle, ExifInterface,
+Jetpack Compose / Material and Media3), Kotlin, and kotlinx.coroutines are
+used under the Apache License, Version 2.0. JUnit 4 is used only for tests
+under the Eclipse Public License 1.0; Hamcrest test dependencies use BSD terms.
+Dependency artifacts may include their own additional notices and licenses.
+
+A full copy of the Apache License, Version 2.0 is included at
+docs/licenses/Apache-2.0.txt.

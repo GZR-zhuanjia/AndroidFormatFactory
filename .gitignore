@@ -1,0 +1,25 @@
+# Local Android / IDE configuration
+local.properties
+.idea/
+*.iml
+.DS_Store
+
+# Generated build outputs and caches
+.gradle/
+.kotlin/
+**/build/
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.apks
+*.zip
+
+# Signing and local secrets
+*.jks
+*.keystore
+keystore.properties
+.env
+.env.*
+!.env.example
