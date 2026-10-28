@@ -19,3 +19,15 @@
 本地完成必要编译：`./gradlew --offline --no-daemon -PnativeAbis=arm64-v8a :app:checkNativeDependencies :app:compileDebugKotlin :app:externalNativeBuildDebug`，`BUILD SUCCESSFUL in 1m 19s`，18 项任务中 11 执行、7 已为最新。FFmpeg/LAME arm64 依赖从固定源码实际编译完成；JNI 成功链接，Kotlin 编译通过。实际 FFmpeg 配置确认 GPL/NONFREE/VERSION3/NETWORK 均关闭，仅启用 FILE/PIPE 协议；五个共享库 SONAME 无版本后缀，LOAD 段为 16KiB 对齐。
 
 构建前仅调整了沙箱内 Gradle/Android 用户目录与本地 socket 权限；编译器有 CoroutineStart.ATOMIC 的 Delicate API 提示（已用注释说明避免 session 泄漏的必要性），以及现有 Gradle 9 兼容性提示。没有因此展开额外测试。x86_64 路径由脚本和 CI 提供，未在本地验证；本轮不做真机/模拟器转换测试，不运行新增单元测试，不生成应用安装包或源码压缩包。
+
+## 相册、外部保存与音质选项
+
+新增 AndroidX Photo Picker 视频入口（旧系统回退 OpenDocument），保留文件入口；SAF 创建文档保存增加手机 / U盘位置指引、取消及拔盘错误提示。音频默认 320 kbps，新增原始 / 44.1 / 48 / 96 kHz 和 WAV / FLAC 位深选项；Service 参数与 JNI 编码器同步接通。界面字体、原视频参数及现有功能保留。
+
+2026-10-28 本地按本轮范围完成必要编译：
+
+- `./scripts/build-native.sh --abis arm64-v8a --jobs 4`：成功，从固定源码重建包含 pcm_s24le / pcm_s32le / pcm_f32le 的 FFmpeg/LAME，脚本的 LGPL 配置、SONAME 与 16KiB 对齐校验通过。
+- `./gradlew :app:compileDebugKotlin -PnativeAbis=arm64-v8a --console=plain`：`BUILD SUCCESSFUL in 1m 26s`，15 项任务，2 执行、13 已为最新。
+- `./gradlew --offline :app:externalNativeBuildDebug -PnativeAbis=arm64-v8a --console=plain`：`BUILD SUCCESSFUL in 28s`，4 项任务全部执行。
+
+只做编译与静态差异检查；未启动模拟器、运行转换或 UI/单元测试、生成 APK/ZIP。相册选择、实际 OTG U盘写入/拔盘和输出音频需在真机确认。编译提示仍为现有 CoroutineStart.ATOMIC / Gradle 9 兼容性提示，另有只影响统计的 Android 用户目录不可写提示；编译未失败。本轮未验证 x86_64。

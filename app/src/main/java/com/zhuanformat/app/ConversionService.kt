@@ -149,6 +149,7 @@ class ConversionService : Service() {
                 putExtra("videoHeight", options.videoHeight); putExtra("videoBitrate", options.videoBitrate)
                 putExtra("audioBitrate", options.audioBitrate); putExtra("imageMaxEdge", options.imageMaxEdge)
                 putExtra("imageQuality", options.imageQuality)
+                putExtra("audioSampleRate", options.audioSampleRate); putExtra("audioBitDepth", options.audioBitDepth)
             })
         }
         fun cancel(context: Context) {
@@ -159,7 +160,8 @@ class ConversionService : Service() {
             format = OutputFormat.valueOf(checkNotNull(intent.getStringExtra("format"))),
             videoHeight = intent.getIntExtra("videoHeight", 720), videoBitrate = intent.getIntExtra("videoBitrate", 4_000_000),
             audioBitrate = intent.getIntExtra("audioBitrate", 192_000), imageMaxEdge = intent.getIntExtra("imageMaxEdge", 1920),
-            imageQuality = intent.getIntExtra("imageQuality", 90)
+            imageQuality = intent.getIntExtra("imageQuality", 90),
+            audioSampleRate = intent.getIntExtra("audioSampleRate", 0), audioBitDepth = intent.getIntExtra("audioBitDepth", 0)
         )
         fun friendlyError(error: Exception): String = when (error) {
             is SecurityException -> "文件访问权限已失效，请重新选择文件。"

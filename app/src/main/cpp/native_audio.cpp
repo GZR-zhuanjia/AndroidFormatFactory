@@ -180,11 +180,13 @@ int nearestRate(int requested, const AVCodec* codec) {
     return best;
 }
 void convert(JNIEnv* env, const std::shared_ptr<Session>& session, const std::string& inputPath,
-             const std::string& outputPath, const std::string& format, int rate, int channels, int bitrate, jobject callback) {
+             const std::string& outputPath, const std::string& format, int rate, int channels, int bitrate, jobject callback, int bitDepth) {
     require(inputPath != outputPath, "Input and output paths must differ");
     require(rate == 0 || (rate >= 8000 && rate <= 192000), "Unsupported sample rate");
     require(channels >= 0 && channels <= 8, "Unsupported channel count");
     require(bitrate >= 8000 && bitrate <= 512000, "Unsupported audio bitrate");
+    require(bitDepth == 0 || bitDepth == 16 || bitDepth == 24 || bitDepth == -32, "Unsupported bit depth");
+    require(format != "flac" || bitDepth != -32, "FLAC does not support float samples");
     require(callback != nullptr, "Progress callback is null");
     jclass callbackClass = env->GetObjectClass(callback);
     jmethodID progressMethod = env->GetMethodID(callbackClass, "onProgress", "(F)V");
@@ -202,8 +204,6 @@ void convert(JNIEnv* env, const std::shared_ptr<Session>& session, const std::st
     else if (format == "m4a") { encoderName = "aac"; muxer = "ipod"; }
     else if (format == "wav") { encoderName = "pcm_s16le"; muxer = "wav"; }
     else throw Failure("Unsupported output format");
-    const AVCodec* encoder = avcodec_find_encoder_by_name(encoderName);
-    require(encoder, "Requested audio encoder is unavailable");
     Conversion state;
     require(state.packet && state.encoded && state.frame, "Cannot allocate conversion buffers");
     state.decoder = avcodec_alloc_context3(decoder); require(state.decoder, "Cannot allocate decoder");
@@ -219,6 +219,17 @@ void convert(JNIEnv* env, const std::shared_ptr<Session>& session, const std::st
     state.inputRate = state.decoder->sample_rate;
     state.inputFormat = state.decoder->sample_fmt;
     check(av_channel_layout_copy(&state.inputLayout, &state.decoder->ch_layout), "Copy input channel layout");
+    const auto packedInput = av_get_packed_sample_fmt(state.decoder->sample_fmt);
+    const bool floatInput = packedInput == AV_SAMPLE_FMT_FLT || packedInput == AV_SAMPLE_FMT_DBL;
+    const int sourceBits = state.decoder->bits_per_raw_sample > 0 ? state.decoder->bits_per_raw_sample
+        : (source->codecpar->bits_per_raw_sample > 0 ? source->codecpar->bits_per_raw_sample
+            : av_get_bytes_per_sample(state.decoder->sample_fmt) * 8);
+    const int outputBits = bitDepth != 0 ? bitDepth : (floatInput ? (format == "wav" ? -32 : 24)
+        : sourceBits <= 16 ? 16 : sourceBits <= 24 || format == "flac" ? 24 : 32);
+    if (format == "wav") encoderName = outputBits == -32 ? "pcm_f32le" : outputBits == 32 ? "pcm_s32le"
+        : outputBits == 24 ? "pcm_s24le" : "pcm_s16le";
+    const AVCodec* encoder = avcodec_find_encoder_by_name(encoderName);
+    require(encoder, "Requested audio encoder is unavailable");
     state.encoder = avcodec_alloc_context3(encoder); require(state.encoder, "Cannot allocate encoder");
     auto enc = state.encoder;
     enc->sample_rate = nearestRate(rate ? rate : state.decoder->sample_rate, encoder);
@@ -233,9 +244,8 @@ void convert(JNIEnv* env, const std::shared_ptr<Session>& session, const std::st
     const auto formats = static_cast<const AVSampleFormat*>(configurations);
     enc->sample_fmt = formats ? formats[0] : AV_SAMPLE_FMT_S16;
     if (format == "flac") {
-        const int bits = state.decoder->bits_per_raw_sample ? state.decoder->bits_per_raw_sample : av_get_bytes_per_sample(state.decoder->sample_fmt) * 8;
-        enc->sample_fmt = bits <= 16 ? AV_SAMPLE_FMT_S16 : AV_SAMPLE_FMT_S32;
-        enc->bits_per_raw_sample = bits <= 16 ? 16 : 24;
+        enc->sample_fmt = outputBits <= 16 ? AV_SAMPLE_FMT_S16 : AV_SAMPLE_FMT_S32;
+        enc->bits_per_raw_sample = outputBits <= 16 ? 16 : 24;
     }
     enc->bit_rate = bitrate; enc->time_base = {1, enc->sample_rate}; enc->thread_count = 1;
     check(avformat_alloc_output_context2(&state.output, nullptr, muxer, outputPath.c_str()), "Allocate output container");
@@ -378,7 +388,7 @@ extern "C" JNIEXPORT jstring JNICALL Java_com_zhuanformat_app_NativeAudioBridge_
     } catch (const std::exception& error) { raise(env, error); return nullptr; }
 }
 extern "C" JNIEXPORT void JNICALL Java_com_zhuanformat_app_NativeAudioBridge_convert(JNIEnv* env, jobject, jlong id, jstring input, jstring output,
-        jstring formatValue, jint rate, jint channels, jint bitrate, jobject callback) {
+        jstring formatValue, jint rate, jint channels, jint bitrate, jobject callback, jint bitDepth) {
     try {
         auto session = findSession(id); Busy busy(session);
         std::string inputPath = path(env, input); std::string outputPath = path(env, output);
@@ -388,6 +398,6 @@ extern "C" JNIEXPORT void JNICALL Java_com_zhuanformat_app_NativeAudioBridge_con
         require(formatValue != nullptr, "Output format is null");
         const char* chars = env->GetStringUTFChars(formatValue, nullptr); require(chars, "Cannot read output format");
         std::string format(chars); env->ReleaseStringUTFChars(formatValue, chars);
-        convert(env, session, inputPath, outputPath, format, rate, channels, bitrate, callback);
+        convert(env, session, inputPath, outputPath, format, rate, channels, bitrate, callback, bitDepth);
     } catch (const std::exception& error) { raise(env, error); }
 }

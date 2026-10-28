@@ -11,6 +11,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.compose.animation.AnimatedVisibility
@@ -151,16 +152,21 @@ fun ConverterScreen() {
     var formatName by rememberSaveable { mutableStateOf(OutputFormat.MP4.name) }
     var videoHeight by rememberSaveable { mutableStateOf(720) }
     var videoBitrate by rememberSaveable { mutableStateOf(4_000_000) }
-    var audioBitrate by rememberSaveable { mutableStateOf(192_000) }
+    var audioBitrate by rememberSaveable { mutableStateOf(320_000) }
     var imageMaxEdge by rememberSaveable { mutableStateOf(1920) }
     var imageQuality by rememberSaveable { mutableStateOf(90) }
-    val options = ConversionOptions(kind, OutputFormat.valueOf(formatName), videoHeight, videoBitrate, audioBitrate, imageMaxEdge, imageQuality)
+    var audioSampleRate by rememberSaveable { mutableStateOf(0) }
+    var audioBitDepth by rememberSaveable { mutableStateOf(0) }
+    val options = ConversionOptions(kind, OutputFormat.valueOf(formatName), videoHeight, videoBitrate,
+        if (kind == MediaKind.AUDIO) audioBitrate else 192_000, imageMaxEdge, imageQuality, audioSampleRate,
+        if (formatName == OutputFormat.FLAC.name && audioBitDepth == -32) 0 else audioBitDepth)
     var source by remember { mutableStateOf<SourceInfo?>(null) }
     var inspecting by remember { mutableStateOf(false) }
     var sourceError by remember { mutableStateOf<String?>(null) }
     var help by remember { mutableStateOf(false) }
     var detail by remember { mutableStateOf<ConversionRecord?>(null) }
     var deleting by remember { mutableStateOf<ConversionRecord?>(null) }
+    var saveGuideId by rememberSaveable { mutableStateOf<String?>(null) }
     var savingId by rememberSaveable { mutableStateOf<String?>(null) }
     var starting by remember { mutableStateOf(false) }
 
@@ -184,16 +190,18 @@ fun ConverterScreen() {
         if (starting) { kotlinx.coroutines.delay(3000); starting = false }
     }
     val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { startConversion() }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            if (pickingKind != kindName) {
-                kindName = pickingKind
-                formatName = formatsFor(MediaKind.valueOf(pickingKind)).first().name
-            }
-            selectedUri = uri.toString()
+    fun selectSource(uri: Uri?) {
+        if (uri == null) return
+        runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        if (pickingKind != kindName) {
+            kindName = pickingKind
+            formatName = formatsFor(MediaKind.valueOf(pickingKind)).first().name
         }
+        selectedUri = uri.toString()
     }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { selectSource(it) }
+    // AndroidX uses the system Photo Picker where available and OpenDocument on older devices.
+    val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { selectSource(it) }
     val saver = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val destination = result.data?.data
         val record = records.firstOrNull { it.id == savingId }
@@ -213,7 +221,7 @@ fun ConverterScreen() {
         } finally { inspecting = false }
     }
 
-    fun save(record: ConversionRecord) {
+    fun launchSave(record: ConversionRecord) {
         if (repository.resultFile(record) == null) { message("转换结果已不存在"); return }
         savingId = record.id
         runCatching {
@@ -284,14 +292,24 @@ fun ConverterScreen() {
                         }
                     }
                     item {
-                        SourceCard(kind, source, inspecting, sourceError, enabled = !exporting) {
-                            pickingKind = kind.name
-                            // Some document providers report audio as application/octet-stream.
-                            picker.launch(if (kind == MediaKind.AUDIO) arrayOf("*/*") else arrayOf(kind.pickerMime))
-                        }
+                        SourceCard(kind, source, inspecting, sourceError, enabled = !exporting,
+                            onGalleryPick = if (kind != MediaKind.IMAGE) {{
+                                pickingKind = kind.name
+                                runCatching { videoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.VideoOnly)) }
+                                    .onFailure {
+                                        runCatching { picker.launch(arrayOf("video/*")) }
+                                            .onFailure { message("设备没有可用的相册或文件选择应用") }
+                                    }
+                            }} else null,
+                            onPick = {
+                                pickingKind = kind.name
+                                // Some document providers report audio as application/octet-stream.
+                                runCatching { picker.launch(if (kind == MediaKind.AUDIO) arrayOf("*/*") else arrayOf(kind.pickerMime)) }
+                                    .onFailure { message("设备没有可用的文件选择应用") }
+                            })
                     }
                     item {
-                        SettingsCard(options, onFormat = { formatName = it.name }, onVideoHeight = { videoHeight = it }, onVideoBitrate = { videoBitrate = it }, onAudioBitrate = { audioBitrate = it }, onImageEdge = { imageMaxEdge = it }, onImageQuality = { imageQuality = it })
+                        SettingsCard(options, onFormat = { formatName = it.name }, onVideoHeight = { videoHeight = it }, onVideoBitrate = { videoBitrate = it }, onAudioBitrate = { audioBitrate = it }, onAudioSampleRate = { audioSampleRate = it }, onAudioBitDepth = { audioBitDepth = it }, onImageEdge = { imageMaxEdge = it }, onImageQuality = { imageQuality = it })
                     }
                     if (active != null) item { ProgressCard(checkNotNull(active)) { ConversionService.cancel(context) } }
                     item {
@@ -313,7 +331,7 @@ fun ConverterScreen() {
                                 Text("最近结果", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                                 TextButton(onClick = { page = 1 }) { Text("全部记录") }
                             }
-                            ResultCard(latest, exporting, onSave = { save(latest) }, onShare = { share(latest) }, onDetail = { detail = latest })
+                            ResultCard(latest, exporting, onSave = { saveGuideId = latest.id }, onShare = { share(latest) }, onDetail = { detail = latest })
                         }
                     }
                 } else {
@@ -334,7 +352,7 @@ fun ConverterScreen() {
                     }
                     items(records.filterNot { it.status == JobStatus.RUNNING }, key = { it.id }) { record ->
                         Column {
-                            ResultCard(record, exporting, onSave = { save(record) }, onShare = { share(record) }, onDetail = { detail = record })
+                            ResultCard(record, exporting, onSave = { saveGuideId = record.id }, onShare = { share(record) }, onDetail = { detail = record })
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                                 TextButton(onClick = { deleting = record }, enabled = !exporting) { Icon(Icons.Outlined.DeleteOutline, null, Modifier.size(16.dp)); Text(" 删除", style = MaterialTheme.typography.labelMedium) }
                             }
@@ -350,12 +368,20 @@ fun ConverterScreen() {
         Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("视频 → MP4（H.264 / AAC）\n音频或视频声音 → M4A / MP3 / FLAC / WAV\n图片 → JPG / PNG / WebP")
             Text("音频由 FFmpeg 在本机处理，可尝试 MP4、MOV、MKV、WebM、MP3、AAC、FLAC、WAV 等。视频兼容性取决于设备；不支持批量转换或加密媒体处理。", color = Muted)
+            Text("从“音频”页可直接从相册选视频提取声音。结果可保存到手机或系统识别的 OTG U盘，在系统文件窗口选择位置。", color = Muted)
             Text("音频源文件上限 8GB，读取时会创建应用内临时副本；请为副本及输出预留存储空间。", color = Muted)
             Text("JPG 会将透明区域填为白色；图片导出不保留 EXIF / 位置信息。WAV 文件较大，上限约 4GB。", color = Muted)
             Text("音频开源组件：FFmpeg 7.1.5（LGPL 2.1 或更高版本）、LAME 3.100（LGPL 2 或更高版本）。许可证随应用附带，源码、构建和替换说明：github.com/GZR-zhuanjia/AndroidFormatFactory", color = Muted)
             Text("无需联网或全盘权限。后台任务可在通知或应用中取消；系统结束进程后不会自动续传。卸载应用会清除应用内结果，请及时保存。", color = Muted)
         }
     }, confirmButton = { TextButton(onClick = { help = false }) { Text("知道了") } })
+    saveGuideId?.let { id ->
+        val record = records.firstOrNull { it.id == id }
+        if (record != null) AlertDialog(onDismissRequest = { saveGuideId = null }, title = { Text("保存到手机 / U盘") },
+            text = { Text("在接下来的系统文件窗口，打开左上角菜单，选择手机存储或已连接的 U盘，再选择文件夹并点“保存”。\n\n若看不到 U盘，请检查 OTG 连接及手机是否识别了 U盘；部分设备不支持外接存储。") },
+            confirmButton = { TextButton(onClick = { saveGuideId = null; launchSave(record) }) { Text("选择保存位置") } },
+            dismissButton = { TextButton(onClick = { saveGuideId = null }) { Text("取消") } })
+    }
     detail?.let { record ->
         AlertDialog(onDismissRequest = { detail = null }, title = { Text(record.status.title) }, text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -374,14 +400,20 @@ fun ConverterScreen() {
                 deleting = null
             }) { Text("删除", color = MaterialTheme.colorScheme.error) } }, dismissButton = { TextButton(onClick = { deleting = null }) { Text("保留") } })
     }
-    if (exporting) AlertDialog(onDismissRequest = {}, title = { Text("正在保存文件") }, text = { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp); Text(" 正在复制到所选位置…", Modifier.padding(start = 8.dp)) } }, confirmButton = {})
+    if (exporting) AlertDialog(onDismissRequest = {}, title = { Text("正在保存文件") }, text = { Row(verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp); Text(" 正在复制到所选位置…", Modifier.padding(start = 8.dp)) } }, confirmButton = { TextButton(onClick = { exporter.cancel() }) { Text("取消保存") } })
 }
 
 @Composable
-private fun SourceCard(kind: MediaKind, source: SourceInfo?, loading: Boolean, error: String?, enabled: Boolean, onPick: () -> Unit) {
+private fun SourceCard(kind: MediaKind, source: SourceInfo?, loading: Boolean, error: String?, enabled: Boolean, onGalleryPick: (() -> Unit)?, onPick: () -> Unit) {
     Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(22.dp), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             SectionLabel("01", "选择${kind.title}文件")
+            if (onGalleryPick != null) {
+                OutlinedButton(onClick = onGalleryPick, enabled = enabled, shape = RoundedCornerShape(12.dp)) {
+                    Icon(Icons.Outlined.Movie, null, Modifier.size(18.dp))
+                    Text(if (kind == MediaKind.AUDIO) " 从相册选视频提取声音" else " 从相册选视频")
+                }
+            }
             if (loading) {
                 Row(Modifier.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp); Text(" 正在读取文件信息…", Modifier.padding(start = 10.dp), color = Muted) }
             } else if (source != null) {
@@ -410,7 +442,7 @@ private fun SourceCard(kind: MediaKind, source: SourceInfo?, loading: Boolean, e
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SettingsCard(options: ConversionOptions, onFormat: (OutputFormat) -> Unit, onVideoHeight: (Int) -> Unit, onVideoBitrate: (Int) -> Unit, onAudioBitrate: (Int) -> Unit, onImageEdge: (Int) -> Unit, onImageQuality: (Int) -> Unit) {
+private fun SettingsCard(options: ConversionOptions, onFormat: (OutputFormat) -> Unit, onVideoHeight: (Int) -> Unit, onVideoBitrate: (Int) -> Unit, onAudioBitrate: (Int) -> Unit, onAudioSampleRate: (Int) -> Unit, onAudioBitDepth: (Int) -> Unit, onImageEdge: (Int) -> Unit, onImageQuality: (Int) -> Unit) {
     Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(22.dp)) {
         Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             SectionLabel("02", "设置输出")
@@ -426,13 +458,20 @@ private fun SettingsCard(options: ConversionOptions, onFormat: (OutputFormat) ->
                     Text("H.264 视频 + AAC 音频，保留原帧率。设备可能微调尺寸对齐或码率，以兼容编码器。", style = MaterialTheme.typography.bodySmall, color = Muted)
                 }
                 MediaKind.AUDIO -> {
-                    if (options.format in listOf(OutputFormat.M4A, OutputFormat.MP3)) ChoiceRow("音频码率", listOf(128_000 to "128 kbps", 192_000 to "192 kbps", 256_000 to "256 kbps"), options.audioBitrate, onAudioBitrate)
+                    if (options.format in listOf(OutputFormat.M4A, OutputFormat.MP3)) ChoiceRow("音频码率", listOf(128_000 to "128 kbps", 192_000 to "192 kbps", 256_000 to "256 kbps", 320_000 to "320 kbps"), options.audioBitrate, onAudioBitrate)
+                    ChoiceRow("采样率", listOf(0 to "原始", 44100 to "44.1 kHz", 48000 to "48 kHz", 96000 to "96 kHz"), options.audioSampleRate, onAudioSampleRate)
+                    if (options.format in listOf(OutputFormat.WAV, OutputFormat.FLAC)) {
+                        val depths = listOf(0 to "按源位深", 16 to "16 位", 24 to "24 位") +
+                            if (options.format == OutputFormat.WAV) listOf(-32 to "32 位浮点") else emptyList()
+                        ChoiceRow("音频位深", depths, options.audioBitDepth, onAudioBitDepth)
+                    }
                     Text(when (options.format) {
-                        OutputFormat.WAV -> "16 位 PCM，无压缩编码。保留原采样率与声道；文件较大，标准 WAV 上限约 4GB。"
-                        OutputFormat.FLAC -> "FLAC 16 / 24 位整数无损压缩，保留采样率与声道；浮点或更高位深会转为 24 位。"
+                        OutputFormat.WAV -> "PCM 无压缩，可选 16 / 24 位整数、32 位浮点。按源位深保留整数精度（最高 32 位），浮点转 32 位浮点。保留声道，标准 WAV 上限约 4GB。"
+                        OutputFormat.FLAC -> "FLAC 16 / 24 位整数压缩，保留声道。按源位深最高保留 24 位；浮点或 32 位整数源转为 24 位，无法完整保留原精度。"
                         OutputFormat.MP3 -> "LAME MP3 编码，最多双声道；采样率必要时调整到编码器支持的值。选择视频时仅提取声音。"
                         else -> "M4A 容器 · AAC 编码，最多双声道。选择视频时仅提取声音。"
                     }, style = MaterialTheme.typography.bodySmall, color = Muted)
+                    Text("提高码率可减少重编码损失；提高采样率或位深不能恢复源文件已丢失的音质。MP3 / AAC 采样率会调整到编码器支持的值。", style = MaterialTheme.typography.bodySmall, color = Muted)
                 }
                 MediaKind.IMAGE -> {
                     ChoiceRow("图片最长边", listOf(0 to "原图", 2560 to "2560px", 1920 to "1920px", 1280 to "1280px"), options.imageMaxEdge, onImageEdge)
@@ -498,7 +537,7 @@ private fun ResultCard(record: ConversionRecord, busy: Boolean, onSave: () -> Un
             if (record.message != null) Text(record.message, style = MaterialTheme.typography.bodySmall, color = Muted)
             if (record.status == JobStatus.SUCCESS) {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(onClick = onSave, enabled = !busy, shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) { Icon(Icons.Outlined.ArrowDownward, null, Modifier.size(17.dp)); Text(" 保存到文件") }
+                    Button(onClick = onSave, enabled = !busy, shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) { Icon(Icons.Outlined.ArrowDownward, null, Modifier.size(17.dp)); Text(" 保存到手机 / U盘") }
                     OutlinedButton(onClick = onShare, enabled = !busy, shape = RoundedCornerShape(12.dp), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) { Icon(Icons.Outlined.Share, null, Modifier.size(17.dp)); Text(" 分享") }
                 }
             }

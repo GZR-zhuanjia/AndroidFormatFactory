@@ -6,6 +6,8 @@ import android.provider.DocumentsContract
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,12 +22,14 @@ class ResultExporter(private val context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val _state = MutableStateFlow(ExportState())
     val state = _state.asStateFlow()
+    private var job: Job? = null
 
     fun start(record: ConversionRecord, destination: Uri) {
         if (_state.value.running) return
         _state.value = ExportState(running = true)
-        scope.launch {
-            val message = try {
+        job = scope.launch {
+            var message = "保存失败，请检查 U盘连接、目标目录权限和剩余空间，然后重试。"
+            try {
                 withContext(Dispatchers.IO) {
                     val file = context.conversionRepository.resultFile(record) ?: error("转换结果已不存在")
                     val output = context.contentResolver.openOutputStream(destination, "wt") ?: error("无法打开保存位置")
@@ -38,20 +42,26 @@ class ResultExporter(private val context: Context) {
                                 if (size < 0) break
                                 stream.write(buffer, 0, size)
                             }
+                            stream.flush()
                         }
                     }
+                    ensureActive()
                 }
-                "已保存到所选位置"
+                message = "已保存到所选位置"
             } catch (error: Exception) {
-                withContext(Dispatchers.IO) {
+                // Providers may fail to delete an incomplete copy after USB removal.
+                withContext(NonCancellable + Dispatchers.IO) {
                     runCatching { DocumentsContract.deleteDocument(context.contentResolver, destination) }
                 }
-                if (error is CancellationException) throw error
-                "保存失败，请检查目标目录权限和剩余空间。可再次保存。"
+                message = if (error is CancellationException) "已取消保存，转换结果仍在应用内。若目标位置留有不完整文件，可手动删除。"
+                    else "保存失败，请检查 U盘连接、目标目录权限和剩余空间，然后重试。若留下不完整文件，可手动删除。"
+            } finally {
+                _state.value = ExportState(message = message)
+                job = null
             }
-            _state.value = ExportState(message = message)
         }
     }
 
+    fun cancel() { job?.cancel() }
     fun consumeMessage() { _state.value = _state.value.copy(message = null) }
 }

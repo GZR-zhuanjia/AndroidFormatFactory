@@ -23,7 +23,7 @@ object NativeAudioBridge {
     external fun probe(id: Long, inputPath: String): String
     external fun convert(
         id: Long, inputPath: String, outputPath: String, format: String,
-        sampleRate: Int, channels: Int, bitrate: Int, callback: NativeProgressCallback
+        sampleRate: Int, channels: Int, bitrate: Int, callback: NativeProgressCallback, bitDepth: Int = 0
     )
 }
 

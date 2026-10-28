@@ -18,14 +18,14 @@ object NativeAudioConverter {
                 var lastPercent = -2
                 NativeAudioBridge.convert(
                     session, input.absolutePath, output.absolutePath, options.format.extension,
-                    0, 0, options.audioBitrate,
+                    options.audioSampleRate, 0, options.audioBitrate,
                     NativeProgressCallback { fraction ->
                         val percent = if (fraction.isFinite() && fraction >= 0) (fraction * 100).toInt().coerceIn(0, 99) else null
                         if ((percent ?: -1) != lastPercent) {
                             lastPercent = percent ?: -1
                             progress(percent, "编码 ${options.format.label} 音频")
                         }
-                    }
+                    }, options.audioBitDepth
                 )
             }
         } finally {

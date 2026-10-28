@@ -70,7 +70,7 @@ for abi in "${TARGET_ABIS[@]}"; do
       --enable-demuxer=aac,ac3,aiff,amr,ape,asf,avi,caf,dts,eac3,flac,matroska,mov,mp3,mpeg,mpegts,ogg,wav,wv \
       --enable-decoder=aac,aac_fixed,ac3,ac3_fixed,alac,amrnb,amrwb,ape,atrac3,atrac3p,cook,dca,eac3,flac,mp1,mp1float,mp2,mp2float,mp3,mp3float,opus,pcm_alaw,pcm_f32be,pcm_f32le,pcm_f64be,pcm_f64le,pcm_mulaw,pcm_s16be,pcm_s16le,pcm_s24be,pcm_s24le,pcm_s32be,pcm_s32le,pcm_u8,vorbis,wavpack,wmav1,wmav2,wmapro,wmalossless \
       --enable-parser=aac,aac_latm,ac3,dca,flac,mpegaudio,opus,vorbis \
-      --enable-encoder=libmp3lame,flac,aac,pcm_s16le --enable-muxer=mp3,flac,ipod,wav \
+      --enable-encoder=libmp3lame,flac,aac,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le --enable-muxer=mp3,flac,ipod,wav \
       --extra-cflags="-I$prefix/include -O2" --extra-ldflags="-L$prefix/lib -Wl,-z,max-page-size=16384" --extra-libs=-lm
     make -j"$JOBS"
     make install
