@@ -2,7 +2,6 @@
 
 一个使用 Kotlin 与 Jetpack Compose 编写的中文 Android 本地多媒体转换工具。支持 Android 8.0（API 26）及以上，输入文件由系统相册或文件选择器授权，转换过程在手机上完成。
 
-项目当前为源码交付：没有发布下载链接，也不提供现成安装包或源码压缩包。源码仓库：<https://github.com/GZR-zhuanjia/AndroidFormatFactory>。
 
 ## 支持的转换
 
